@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kaizen Temuan</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#1b1f27;--mu:#667085;--bd:#d6dae1;--ac:#0b4f9c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+.w{max-width:900px;margin:0 auto;padding:14px}
+.top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+h1{font-size:19px;margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+button,select,input[type=text],textarea{font:inherit;padding:8px 12px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.p,.tabs .on{background:var(--ac);color:#fff;border-color:var(--ac)}button:disabled{opacity:.5}
+textarea,input[type=text]{width:100%}textarea{min-height:110px}
+.tabs{display:flex;gap:6px}.s{font-size:12px;color:var(--mu)}
+.prev{max-width:100%;max-height:260px;margin-top:8px;border-radius:6px;display:block}
+.row{display:flex;gap:10px;align-items:center;border-top:1px solid var(--bd);padding:10px 0;flex-wrap:wrap}
+.row:first-of-type{border-top:0}.row img{width:70px;height:70px;object-fit:cover;border-radius:6px;background:var(--bd)}
+.m{flex:1;min-width:160px}.m b{display:block}.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.bar>*{flex:1;min-width:110px}
+.msg{padding:8px 10px;background:#fff7e0;border:1px solid #f0d58a;border-radius:6px;margin-bottom:10px;font-size:13px}
+#pr{display:none}
+/* ===== FORM CETAK ===== */
+.pg{font:7.5pt Arial,sans-serif;color:#000;page-break-after:always;width:100%}
+.pg table{width:100%;border-collapse:collapse;table-layout:fixed}
+.pg td,.pg th{border:1px solid #000;padding:2px 4px;vertical-align:top;font-weight:normal}
+.pg .h{font-size:11pt;border:1px solid #000;border-bottom:0;padding:3px 5px;display:flex;justify-content:space-between;align-items:center;margin-top:4px}
+.pg .h:first-child{margin-top:0}.pg b{font-weight:bold}
+.pg .sg td{height:38px}.pg .sg tr.n td{height:auto}
+.pg .ft{height:215px}.pg .ft img{max-width:100%;max-height:200px;display:block;margin:2px auto}
+.pg .ds{white-space:pre-wrap;word-break:break-word}
+@media print{@page{size:A4 portrait;margin:7mm}body{background:#fff}#app{display:none}#pr{display:block}}
+</style></head><body>
+<div class="w" id="app">
+<div class="top"><h1>Kaizen – Temuan</h1>
+<div class="tabs"><button id="t1" class="on">Upload</button><button id="t2">Database</button><button id="cfg" title="Token GitHub untuk pengunggah">⚙</button></div></div>
+<div id="msg" class="msg" hidden></div>
+
+<div id="v1" class="card">
+<label class="s">Foto kondisi sekarang</label>
+<input type="file" id="f" accept="image/*"><img id="pv" class="prev" hidden>
+<label class="s" style="display:block;margin-top:10px">Deskripsi</label>
+<textarea id="d" placeholder="Tulis temuan / masalah yang terlihat di foto"></textarea>
+<p class="s">Tanggal terisi otomatis saat disimpan. Tema, lokasi, tanda tangan, dll. ditulis tangan setelah diprint.</p>
+<button class="p" id="save">Simpan</button>
+</div>
+
+<div id="v2" class="card" hidden>
+<div class="bar"><input type="text" id="q" placeholder="Cari deskripsi"><select id="fs"><option value="">Semua status</option><option>Open</option><option>Proses</option><option>Selesai</option></select><button id="pa">Cetak yang dicentang</button></div>
+<div class="s" id="sum"></div><div id="list"></div>
+</div>
+</div>
+<div id="pr"></div>
+
+<script>
+/* ================= KONFIGURASI ================= */
+const CONFIG={
+  mode:'local', // 'local' = simpan di browser (untuk demo). Ganti ke 'github' kalau repo sudah siap.
+  github:{owner:'USERNAME',repo:'NAMA-REPO',branch:'main',dataPath:'data/temuan.json',imgDir:'images'}
+};
+/* ================================================ */
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const say=t=>{$('msg').hidden=!t;$('msg').textContent=t||''};
+const fmt=ts=>new Date(ts).toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+
+/* ---------- Storage adapter: list / add / update / remove ---------- */
+const Local={
+  async list(){try{return JSON.parse(localStorage.getItem('kz')||'[]')}catch(e){return[]}},
+  async save(a){localStorage.setItem('kz',JSON.stringify(a))},
+  async add(it,dataUrl){it.img=dataUrl;const a=await this.list();a.unshift(it);await this.save(a)},
+  async update(id,p){const a=await this.list();const x=a.find(i=>i.id==id);if(x)Object.assign(x,p);await this.save(a)},
+  async remove(id){await this.save((await this.list()).filter(i=>i.id!=id))}
+};
+const GH={
+  g:CONFIG.github,
+  api(p){return`https://api.github.com/repos/${this.g.owner}/${this.g.repo}/contents/${p}`},
+  tok(){return localStorage.getItem('gh_token')||''},
+  hdr(){const t=this.tok();return t?{Authorization:'Bearer '+t}:{}},
+  async list(){const r=await fetch(this.api(this.g.dataPath)+'?ref='+this.g.branch,{headers:{Accept:'application/vnd.github.raw+json'}});if(r.status==404)return[];if(!r.ok)throw Error('Gagal baca data ('+r.status+')');return r.json()},
+  async put(path,b64,sha,msg){const r=await fetch(this.api(path),{method:'PUT',headers:{...this.hdr(),'Content-Type':'application/json'},body:JSON.stringify({message:msg,content:b64,branch:this.g.branch,...(sha?{sha}:{})})});if(!r.ok)throw Error('Gagal tulis ('+r.status+'). Cek token di ⚙');return r.json()},
+  async mutate(fn){for(let i=0;i<2;i++){
+    const r=await fetch(this.api(this.g.dataPath)+'?ref='+this.g.branch,{headers:this.hdr()});let arr=[],sha;
+    if(r.ok){const j=await r.json();sha=j.sha;arr=JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g,'')))))}
+    fn(arr);try{return await this.put(this.g.dataPath,btoa(unescape(encodeURIComponent(JSON.stringify(arr)))),sha,'update temuan')}catch(e){if(i)throw e}}},
+  async add(it,dataUrl){if(!this.tok())throw Error('Isi token GitHub dulu (tombol ⚙).');
+    const path=this.g.imgDir+'/'+it.id+'.jpg';await this.put(path,dataUrl.split(',')[1],null,'foto '+it.id);it.img=path;await this.mutate(a=>a.unshift(it))},
+  async update(id,p){await this.mutate(a=>{const x=a.find(i=>i.id==id);if(x)Object.assign(x,p)})},
+  async remove(id){await this.mutate(a=>{const k=a.findIndex(i=>i.id==id);if(k>=0)a.splice(k,1)})}
+};
+const Store=CONFIG.mode=='github'?GH:Local;
+
+/* ---------- UI ---------- */
+let items=[],img='';
+const tab=n=>{$('v1').hidden=n!=1;$('v2').hidden=n!=2;$('t1').className=n==1?'on':'';$('t2').className=n==2?'on':''};
+$('t1').onclick=()=>tab(1);$('t2').onclick=()=>{tab(2);load()};
+$('cfg').onclick=()=>{const t=prompt('Token GitHub (fine-grained, izin Contents: read & write). Hanya disimpan di browser ini.',GH.tok());if(t!==null)localStorage.setItem('gh_token',t.trim())};
+
+function shrink(file){return new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,1000/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.72))};i.onerror=no;i.src=r.result};r.onerror=no;r.readAsDataURL(file)})}
+$('f').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{img=await shrink(f);$('pv').src=img;$('pv').hidden=false}catch(x){say('Foto gagal dibaca.')}};
+
+$('save').onclick=async()=>{
+  if(!img||!$('d').value.trim()){say('Foto dan deskripsi wajib diisi.');return}
+  $('save').disabled=true;say('Menyimpan...');
+  const it={id:Date.now().toString(36),desc:$('d').value.trim(),created:Date.now(),status:'Open'};
+  try{await Store.add(it,img);say('Tersimpan ✔');$('d').value='';$('f').value='';img='';$('pv').hidden=true}
+  catch(e){say(e.message)}
+  $('save').disabled=false};
+
+async function load(){try{items=await Store.list();render()}catch(e){say(e.message)}}
+function render(){
+  const q=$('q').value.toLowerCase(),fs=$('fs').value;
+  const v=items.filter(x=>(!fs||x.status==fs)&&(!q||x.desc.toLowerCase().includes(q)));
+  const c=s=>items.filter(x=>x.status==s).length;
+  $('sum').textContent=`Total ${items.length} • Open ${c('Open')} • Proses ${c('Proses')} • Selesai ${c('Selesai')}`;
+  $('list').innerHTML=v.length?v.map(x=>`<div class="row"><input type="checkbox" data-c="${x.id}"><img src="${x.img}">
+  <div class="m"><b>${esc(x.desc.slice(0,80))}${x.desc.length>80?'…':''}</b><span class="s">${fmt(x.created)}</span></div>
+  <select data-s="${x.id}">${['Open','Proses','Selesai'].map(s=>`<option${s==x.status?' selected':''}>${s}</option>`).join('')}</select>
+  <button data-p="${x.id}">Cetak / PDF</button><button data-x="${x.id}">Hapus</button></div>`).join(''):'<p class="s">Belum ada temuan.</p>';
+  const L=$('list');
+  L.querySelectorAll('[data-s]').forEach(e=>e.onchange=()=>Store.update(e.dataset.s,{status:e.value}).then(load).catch(x=>say(x.message)));
+  L.querySelectorAll('[data-p]').forEach(e=>e.onclick=()=>printItems([e.dataset.p]));
+  L.querySelectorAll('[data-x]').forEach(e=>e.onclick=()=>confirm('Hapus temuan ini?')&&Store.remove(e.dataset.x).then(load).catch(x=>say(x.message)))}
+$('q').oninput=render;$('fs').onchange=render;
+$('pa').onclick=()=>{const ids=[...document.querySelectorAll('[data-c]:checked')].map(e=>e.dataset.c);ids.length?printItems(ids):say('Centang temuan dulu.')};
+
+/* ---------- Template form cetak (satu halaman A4 per temuan) ---------- */
+const box=t=>`☐ ${t}`;
+const lines=a=>a.map(box).join('<br>');
+const sig=(h,sub)=>`<table class="sg"><tr>${h.map(x=>`<td>${x}</td>`).join('')}</tr><tr>${h.map(()=>'<td></td>').join('')}</tr><tr class="n">${h.map(()=>'<td>nama<br>tgl</td>').join('')}</tr></table>`;
+function form(x){return`<div class="pg">
+<div class="h"><span>FORMULIR PERMINTAAN KAIZEN (DIISI OLEH USER)</span><b>ATI</b></div>
+<table><tr><td style="width:18%"><b>KATEGORI</b><br>${lines(['Back to Normal','Improvement (Butuh Drawing)'])}</td><td style="width:22%"><b>TEMA</b></td>
+<td style="width:36%" rowspan="2"><b>DESKRIPSI</b><div class="ds">${esc(x.desc)}</div></td><td style="width:24%"><b>LOKASI</b></td></tr>
+<tr><td colspan="2"><b>ASPEK &amp; POINT PENTING</b><br>${box('S :')}<br>${box('Q :')}<br>${box('C :')}<br>${box('D :')}</td><td><b>TGL PERMINTAAN</b><br>${fmt(x.created)}<br><b>TGL ESTIMASI SELESAI</b></td></tr>
+<tr><td colspan="3"><b>SAFETY LEVEL</b> &nbsp; ${box('Low Risk')} &nbsp; ${box('High Risk')} &nbsp; <i>*) harus disetujui SE Dept</i></td><td></td></tr>
+<tr><td colspan="2" class="ft"><b>Kondisi Sekarang (Foto/ Ilustrasi)</b><img src="${x.img}"></td><td colspan="2" class="ft"><b>Kondisi Setelah (Foto/ Ilustrasi)</b></td></tr></table>
+<table style="margin-top:-1px"><tr><td style="width:36%" rowspan="3"><b>VERIFIKASI REQUEST</b> &nbsp; <b>Catatan</b><br>1 Drawing (Jelas / Tidak Jelas)<br>2 Material<br>3 Instalasi (Proses / Tidak Proses)<br>4 Inhouse / Outhouse<br>5 Rencana waktu penyelesaian<br>6 High Risk</td>
+<td colspan="2">Diterima</td><td>Disetujui *)</td><td colspan="2">User Dept.</td></tr>
+<tr class="sg"><td>SH Kaizen</td><td>SE Dept.</td><td>Dept. Head</td><td>Sect. Head</td><td>User/ Request</td></tr>
+<tr><td style="height:34px"></td><td></td><td></td><td></td><td></td></tr></table>
+<table style="margin-top:-1px"><tr class="n"><td>nama / tgl</td><td>nama / tgl</td><td>nama / tgl</td><td>nama / tgl</td><td>nama / tgl</td></tr></table>
+
+<div class="h"><span>SURAT PERINTAH KERJA (DIISI OLEH KAIZEN)</span><b>ATI</b></div>
+<table><tr><td style="width:15%"><b>KATEGORI :</b><br>${lines(['Inhouse','Outhouse'])}</td><td style="width:32%"><b>AKTIVITAS :</b><br><br><b>JUMLAH PEKERJA :</b> &nbsp; <b>PENGAWAS :</b></td><td style="width:15%"><b>AREA KERJA :</b></td>
+<td style="width:20%"><b>ANALISA STOP 6</b><br>${box('Apparatus')} ${box('Drop')}<br>${box('Big Heavy')} ${box('Electric')}<br>${box('Car')} ${box('Fire')}</td><td><b>TANGGAL PEKERJAAN</b><br><br><b>EST. TANGGAL SELESAI</b></td></tr></table>
+<table style="margin-top:-1px"><tr><td style="width:30%"><b>KEBUTUHAN MATERIAL</b><br>No &nbsp; Material &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Qty<br>1<br>2<br>3<br>4<br>5<br>6</td>
+<td style="width:34%"><b>AKTIVITAS &amp; LAMA WAKTU KERJA</b> (Mesin / Waktu Kerja / MP)<br>${lines(['Cutting Laser','Shearing','Welding','Drilling','Fabrikasi/ Assy','Instalasi'])}</td>
+<td><b>SPESIAL SKILL</b><br><div style="columns:2">${lines(['Welder','Electric','Mechanic','Robotic','Alat Angkut','Forklift','HPW','Karakuri','CNC','Hydrolic Pneu','PLC','lain-lain'])}</div></td></tr></table>
+<table style="margin-top:-1px"><tr><td style="width:24%"><b>CHECK LIST KELENGKAPAN CCB</b><br>${lines(['Form Req','Drawing','JSA','KY','Schedule','Daftar Pekerja'])}</td><td style="width:20%"><b>REMARKS</b></td>
+<td>${sig(['PIC Pekerjaan','Dept. Head','Sect. Head','Foreman'])}<div style="text-align:center">Kaizen Dept.</div></td></tr></table>
+
+<div class="h"><span>BERITA ACARA / SERAH TERIMA</span><b>ATI</b></div>
+<table><tr><td style="width:24%"><b>Safety Aspek</b><br>${lines(['Tidak ada bahaya baru','Cover, interlock, emerg. stop','Ada Std (SOP/ WI)','Ergonomi','Electrical Safety','Safety Sign','Mudah untuk 3R'])}</td>
+<td style="width:22%"><b>Quality Aspek</b><br>${lines(['Sesuai request user','Dimensi OK','Visual OK','Capability Trial','Defect = 0','Ada std SOP/ WI'])}</td>
+<td><b>Note :</b>${sig(['SE Dept.','Sect. Head','User/ Request','SH Kaizen','Kaizen Member'])}</td></tr></table></div>`}
+
+function printItems(ids){
+  $('pr').innerHTML=ids.map(id=>items.find(x=>x.id==id)).filter(Boolean).map(form).join('');
+  setTimeout(()=>window.print(),300)}
+
+load();
+</script></body></html>
