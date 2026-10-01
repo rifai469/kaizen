@@ -64,7 +64,8 @@ textarea,input[type=text]{width:100%}textarea{min-height:110px}
 <script>
 /* ================= KONFIGURASI ================= */
 const CONFIG={
-  mode:'local', // 'local' = simpan di browser (untuk demo). Ganti ke 'github' kalau repo sudah siap.
+  mode:'supabase', // 'supabase' | 'github' | 'local' (local = simpan di browser, untuk coba-coba)
+  supabase:{url:'https://namortrjbwukqqhamjcu.supabase.co',key:'sb_publishable_Ex-qopSjynEWFauJMpPKsg_ngV796fF',bucket:'kaizen-foto',allowDelete:false},
   github:{owner:'USERNAME',repo:'NAMA-REPO',branch:'main',dataPath:'data/temuan.json',imgDir:'images'}
 };
 /* ================================================ */
@@ -97,7 +98,19 @@ const GH={
   async update(id,p){await this.mutate(a=>{const x=a.find(i=>i.id==id);if(x)Object.assign(x,p)})},
   async remove(id){await this.mutate(a=>{const k=a.findIndex(i=>i.id==id);if(k>=0)a.splice(k,1)})}
 };
-const Store=CONFIG.mode=='github'?GH:Local;
+const SB={
+  c:CONFIG.supabase,
+  h(x){const k=this.c.key,h={apikey:k,...x};if(k.startsWith('eyJ'))h.Authorization='Bearer '+k;return h},
+  chk(){if(!this.c.key||this.c.key.startsWith('ISI'))throw Error('Key Supabase belum diisi di index.html')},
+  pub(id){return`${this.c.url}/storage/v1/object/public/${this.c.bucket}/${id}.jpg`},
+  async list(){this.chk();const r=await fetch(`${this.c.url}/rest/v1/kaizen_temuan?select=*&order=created.desc`,{headers:this.h()});if(!r.ok)throw Error('Gagal baca data ('+r.status+')');return(await r.json()).map(x=>({id:x.id,desc:x.deskripsi,created:+x.created,status:x.status,img:x.img}))},
+  async add(it,dataUrl){this.chk();const blob=await(await fetch(dataUrl)).blob();
+    let r=await fetch(`${this.c.url}/storage/v1/object/${this.c.bucket}/${it.id}.jpg`,{method:'POST',headers:this.h({'Content-Type':'image/jpeg'}),body:blob});if(!r.ok)throw Error('Upload foto gagal ('+r.status+')');
+    r=await fetch(`${this.c.url}/rest/v1/kaizen_temuan`,{method:'POST',headers:this.h({'Content-Type':'application/json',Prefer:'return=minimal'}),body:JSON.stringify({id:it.id,deskripsi:it.desc,created:it.created,status:it.status,img:this.pub(it.id)})});if(!r.ok)throw Error('Simpan data gagal ('+r.status+')')},
+  async update(id,p){const r=await fetch(`${this.c.url}/rest/v1/kaizen_temuan?id=eq.${id}`,{method:'PATCH',headers:this.h({'Content-Type':'application/json'}),body:JSON.stringify(p)});if(!r.ok)throw Error('Gagal ubah status ('+r.status+')')},
+  async remove(id){const r=await fetch(`${this.c.url}/rest/v1/kaizen_temuan?id=eq.${id}`,{method:'DELETE',headers:this.h()});if(!r.ok)throw Error('Gagal hapus ('+r.status+')')}
+};
+const Store={github:GH,supabase:SB,local:Local}[CONFIG.mode]||Local;
 
 /* ---------- UI ---------- */
 let items=[],img='';
@@ -125,7 +138,7 @@ function render(){
   $('list').innerHTML=v.length?v.map(x=>`<div class="row"><input type="checkbox" data-c="${x.id}"><img src="${x.img}">
   <div class="m"><b>${esc(x.desc.slice(0,80))}${x.desc.length>80?'…':''}</b><span class="s">${fmt(x.created)}</span></div>
   <select data-s="${x.id}">${['Open','Proses','Selesai'].map(s=>`<option${s==x.status?' selected':''}>${s}</option>`).join('')}</select>
-  <button data-p="${x.id}">Cetak / PDF</button><button data-x="${x.id}">Hapus</button></div>`).join(''):'<p class="s">Belum ada temuan.</p>';
+  <button data-p="${x.id}">Cetak / PDF</button>${CONFIG.mode=='supabase'&&!CONFIG.supabase.allowDelete?'':`<button data-x="${x.id}">Hapus</button>`}</div>`).join(''):'<p class="s">Belum ada temuan.</p>';
   const L=$('list');
   L.querySelectorAll('[data-s]').forEach(e=>e.onchange=()=>Store.update(e.dataset.s,{status:e.value}).then(load).catch(x=>say(x.message)));
   L.querySelectorAll('[data-p]').forEach(e=>e.onclick=()=>printItems([e.dataset.p]));
